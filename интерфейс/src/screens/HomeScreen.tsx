@@ -15,7 +15,7 @@ import {
 import type { RunId, DaySummary } from '../data/load.ts';
 import { runCode, whenLabel } from '../data/load.ts';
 import type { Registry, RouteRecord } from '../data/registry.ts';
-import { engineerKey } from '../data/registry.ts';
+import { engineerKey, crewSize, mergeOrders} from '../data/registry.ts';
 import { RunCard } from '../app/RunCard.tsx';
 import { useDuty, workDays } from '../data/duty.ts';
 /* Знак хозяйства без слов. Файлов два, и они разные: `mark.svg` нарисован
@@ -69,7 +69,13 @@ const percent = (share: number) => `${Math.round(share)}%`;
    разделы: Главная отвечает на «что было за последние дни», а не заменяет
    собой архив. */
 const SHIFTS_SHOWN = 7;
-const RUNS_SHOWN = 6;
+/* Расчётов в ряду четыре — ровно столько, сколько их помещается в строку
+   сетки. Шесть ломались на вторую строку из двух карточек, и ряд читался
+   как незаконченный. Остальные — по кнопке под рядом. */
+const RUNS_SHOWN = 4;
+/* Сколько добавляет «Показать ещё». Тот же шаг, что и первый ряд: кнопка
+   дописывает строку, а не вываливает архив. */
+const RUNS_MORE = 4;
 
 /* По чему упорядочены смены в статистике. Первым — время: смену ищут «за
    вчера» и «за прошлую неделю», а не «где вышло лучше». Остальные два
@@ -148,6 +154,12 @@ export function HomeScreen({
   const days = workDays();
   const shifts = useShifts();
   const monitorRuns = useMonitors();
+  /* Был ли сегодня мониторинг. Главная отвечает на «что происходит сейчас»,
+     и без него отвечать нечем: живых чисел нет, свод по отмеченным
+     участкам — это ещё не работа, а намерение. Прежде на этом месте
+     оставалась пустая полоса, и день, в который мониторинг не открывали,
+     выглядел как день, в котором ничего не загрузилось. */
+  const monitorToday = monitorRuns.some((row) => row.id === todayKey());
   const [sort, setSort] = useState<ShiftSort>('date');
   const [desc, setDesc] = useState(true);
 
@@ -208,10 +220,10 @@ export function HomeScreen({
   }, [registry, days, watched.join('|')]);
   /* Последние расчёты — свода справочника, а не ленты истории: карточке
      базы нужны её числа и набросок карты, и считает их справочник. */
-  const recentRuns = useMemo(
-    () => (registry ? [...registry.stats.byRun].slice(-RUNS_SHOWN).reverse() : []),
-    [registry]
-  );
+  /* Сколько расчётов показано сейчас. Растёт кнопкой под рядом. */
+  const [runsShown, setRunsShown] = useState(RUNS_SHOWN);
+  const allRuns = useMemo(() => (registry ? [...registry.stats.byRun].reverse() : []), [registry]);
+  const recentRuns = useMemo(() => allRuns.slice(0, runsShown), [allRuns, runsShown]);
 
   /* Маршруты по расчётам — для списков внутри карточек. Считаем один раз на
      весь ряд: реестр общий, и шесть карточек просеивали бы его шесть раз. */
@@ -423,6 +435,27 @@ export function HomeScreen({
             {/* Свод по отмеченным участкам — под числами и вместо них, когда
                 наблюдение не идёт. Он отвечает галочкам справа: отметили
                 участок — здесь прибавилось его хозяйство. */}
+            {/* Мониторинга сегодня не было — говорим об этом прямо и зовём
+                начать. Табличка стоит над сводом: сперва «работа ещё не
+                начата», потом «вот что для неё отмечено». */}
+            {!monitorToday && (
+              <div className="homecall">
+                <span className="homecall__title">
+                  <Icon name="navigation-arrow" size={14} />
+                  Мониторинг сегодня не открывали
+                </span>
+                <span className="homecall__body">
+                  {days.length === 0
+                    ? 'Смотреть пока не за чем: расчётов нет. Начните с диспетчерской — посчитайте день участка.'
+                    : ready.length === 0
+                      ? 'Ни у одного дня нет рабочего расчёта. Выберите его справа, отметьте участок — и день можно будет взять под присмотр.'
+                      : watched.length === 0
+                        ? 'Отметьте участки справа и запустите мониторинг: живые числа, опаздывающие и журнал дня появятся здесь.'
+                        : 'Участки отмечены — запустите мониторинг, и день пойдёт под присмотром.'}
+                </span>
+              </div>
+            )}
+
             {picked ? (
               <div className="homepick">
                 <span className="homepick__label">
@@ -445,11 +478,13 @@ export function HomeScreen({
                 </span>
               </div>
             ) : (
-              <p className="homehero__note">
-                {ready.length === 0
-                  ? 'Ни у одного дня нет рабочего расчёта: выберите его справа, и день можно будет взять под присмотр.'
-                  : 'Отметьте дни участков справа — здесь встанет то, что за ними стоит: заявки, маршруты и люди.'}
-              </p>
+              monitorToday && (
+                <p className="homehero__note">
+                  {ready.length === 0
+                    ? 'Ни у одного дня нет рабочего расчёта: выберите его справа, и день можно будет взять под присмотр.'
+                    : 'Отметьте дни участков справа — здесь встанет то, что за ними стоит: заявки, маршруты и люди.'}
+                </p>
+              )
             )}
 
             <div className="home__actions">
@@ -458,17 +493,17 @@ export function HomeScreen({
                   Остальные два идут в том порядке, в каком к ним обращаются:
                   воздействие — по ходу дня, диспетчерская — когда нужен
                   новый план. */}
-              {/* Подпись одна на все случаи: диспетчер весь день живёт в
-                  наблюдении и возвращается к нему — отмечены участки или
-                  нет, идёт оно сейчас или его ещё не открывали. Три разных
-                  слова на одной кнопке заставляли читать её каждый раз
-                  заново, а ведёт она всегда в одно место. */}
+              {/* Подписи две, и обе честны. «Вернуться к наблюдению» — когда
+                  сегодня мониторинг уже открывали: диспетчер весь день живёт
+                  в нём и возвращается. Пока его не открывали, возвращаться
+                  некуда, и кнопка зовёт начать: обещание «вернуться» в
+                  первый заход дня читалось как след потерянной работы. */}
               <Button
                 variant="accent"
                 iconLeft={<Icon name="navigation-arrow" size={14} />}
                 onClick={watched.length > 0 ? onEnterWatch : () => onGoSection('monitor')}
               >
-                Вернуться к наблюдению
+                {monitorToday ? 'Вернуться к наблюдению' : 'Запустить мониторинг'}
               </Button>
               <button type="button" className="runcard__act" onClick={() => onGoSection('control')}>
                 <Icon name="lightning" size={13} />
@@ -758,6 +793,26 @@ export function HomeScreen({
             ))}
           </div>
         )}
+
+        {/* Ряд дописывается на месте, как история в воротах диспетчерской:
+            уходить в архив ради ещё четырёх карточек незачем. Кнопка
+            пропадает, когда показаны все. */}
+        {allRuns.length > recentRuns.length && (
+          <button
+            type="button"
+            className="tblmore"
+            onClick={() => setRunsShown((было) => было + RUNS_MORE)}
+          >
+            Показать ещё {Math.min(RUNS_MORE, allRuns.length - recentRuns.length)} из{' '}
+            {allRuns.length - recentRuns.length}
+          </button>
+        )}
+
+        {recentRuns.length > RUNS_SHOWN && (
+          <button type="button" className="tblmore" onClick={() => setRunsShown(RUNS_SHOWN)}>
+            Свернуть до {RUNS_SHOWN}
+          </button>
+        )}
       </section>
 
       {/* ─── статистика по сменам ─────────────────────────────────────────
@@ -852,36 +907,47 @@ export function HomeScreen({
         <div className="tiles">
           <DbTile
             label="Расчёты"
+            unit={['расчёт', 'расчёта', 'расчётов']}
             icon="stack"
             count={runs?.length ?? null}
             onOpen={() => onGoSection('db-runs')}
           />
           <DbTile
             label="Заявки"
+            unit={['заявка', 'заявки', 'заявок']}
             icon="clipboard-list"
-            count={registry?.orders.length ?? null}
+            /* Заявок столько, сколько их есть, а не сколько раз они прошли
+               через расчёты: один и тот же день, пересчитанный трижды, даёт
+               три записи на каждую заявку. В меню и в самой базе стоит
+               уникальное число — здесь стояло число записей, и Главная
+               обещала семьсот заявок там, где их двести пять. */
+            count={registry ? mergeOrders(registry.orders).length : null}
             onOpen={() => onGoSection('db-orders')}
           />
           <DbTile
             label="Услуги"
+            unit={['услуга', 'услуги', 'услуг']}
             icon="wrench"
             count={registry?.services.length ?? null}
             onOpen={() => onGoSection('db-services')}
           />
           <DbTile
             label="Инженеры"
+            unit={['человек', 'человека', 'человек']}
             icon="users"
-            count={registry?.engineers.length ?? null}
+            count={registry ? crewSize(registry.engineers) : null}
             onOpen={() => onGoSection('db-engineers')}
           />
           <DbTile
             label="Клиенты"
+            unit={['адрес', 'адреса', 'адресов']}
             icon="user"
             count={registry?.clients.length ?? null}
             onOpen={() => onGoSection('db-clients')}
           />
           <DbTile
             label="Маршруты"
+            unit={['маршрут', 'маршрута', 'маршрутов']}
             icon="path"
             count={registry?.routes.length ?? null}
             onOpen={() => onGoSection('db-routes')}
@@ -1000,11 +1066,17 @@ function DbTile({
   label,
   icon,
   count,
+  unit,
   onOpen
 }: {
   label: string;
   icon: string;
   count: number | null;
+  /** Чем считаем: «расчётов», «заявок», «человек». Слово «записей» годилось,
+      пока плитки считали строки справочника; теперь заявки и люди считаются
+      поштучно — заявка, посчитанная трижды, остаётся одной заявкой, — и
+      называть их записями значило бы обещать другое число. */
+  unit: [string, string, string];
   onOpen: () => void;
 }) {
   return (
@@ -1018,7 +1090,7 @@ function DbTile({
       {count !== null && count > 0 && (
         <span className="ctile__value">
           {count}{' '}
-          <span className="ctile__unit">{pluralWord(count, 'запись', 'записи', 'записей')}</span>
+          <span className="ctile__unit">{pluralWord(count, unit[0], unit[1], unit[2])}</span>
         </span>
       )}
     </button>
