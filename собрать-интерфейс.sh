@@ -45,8 +45,15 @@ if [ "$BRANCH" = "HEAD" ]; then
   # grep '/' отсекает origin/HEAD: он сокращается до «origin», и в файл
   # уехало бы имя удалённого вместо имени ветки. Дальше снимается только
   # первый кусок пути — имя удалённого, а «claude/что-то» остаётся целым.
-  REF=$(git -C "$APP" for-each-ref --points-at HEAD \
-        --format='%(refname:short)' refs/remotes | grep '/' | head -1)
+  #
+  # На одном коммите ссылок бывает несколько: 29 сентября на нём стояли и
+  # origin/main, и origin/claude/…, и в сборка.json уехало служебное имя
+  # вместо main. Поэтому main и master выбираются первыми — это та ветка,
+  # с которой на самом деле снимают.
+  REFS=$(git -C "$APP" for-each-ref --points-at HEAD \
+         --format='%(refname:short)' refs/remotes | grep '/')
+  REF=$(echo "$REFS" | grep -E '/(main|master)$' | head -1)
+  [ -z "$REF" ] && REF=$(echo "$REFS" | head -1)
   if [ -n "$REF" ]; then BRANCH=${REF#*/}; else BRANCH="отсоединённая@$COMMIT"; fi
 fi
 
