@@ -75,8 +75,20 @@ if [ $BUILD_CODE -ne 0 ]; then
 fi
 
 rm -f "$WEB"/data/*/roads.json
+# Отпечаток дерева, из которого собрано. По нему selfcheck сверяет, что
+# копия исходников в `интерфейс/` — та же, что пошла в сборку: снимают её
+# отдельной командой, и забыть переснять легко (29 сентября, ночь).
+SRC=$(cd "$ROOT" && python3 -c "
+import sys; sys.path.insert(0, '.')
+from vrptw.selfcheck import отпечаток_исходников
+print(отпечаток_исходников('$APP'))")
+if [ -z "$SRC" ]; then
+  echo "✗ не смог посчитать отпечаток исходников — сборка не помечена"
+  exit 1
+fi
+
 cat > "$WEB/сборка.json" <<JSON
-{"ветка": "$BRANCH", "коммит": "$COMMIT", "собрано": "$(date '+%Y-%m-%dT%H:%M:%S')"}
+{"ветка": "$BRANCH", "коммит": "$COMMIT", "исходники": "$SRC", "собрано": "$(date '+%Y-%m-%dT%H:%M:%S')"}
 JSON
 
 SIZE=$(du -sh "$WEB" | cut -f1)
